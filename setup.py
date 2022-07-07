@@ -49,5 +49,4 @@ setup(name='dictalchemy',
       zip_safe=False,
       install_requires=install_requires,
       tests_require=test_requires,
-      test_suite='dictalchemy',
-      **extra)
+      test_suite='dictalchemy')
