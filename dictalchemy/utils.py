@@ -6,96 +6,62 @@ Utilities
 """
 from __future__ import absolute_import, division
 
-from sqlalchemy.orm import (RelationshipProperty, ColumnProperty,
-                            SynonymProperty)
-from sqlalchemy.orm.collections import InstrumentedList, MappedCollection
+import copy
+from sqlalchemy import inspect
+from sqlalchemy.ext.associationproxy import _AssociationList
+
+from sqlalchemy.orm.dynamic import AppenderMixin
+from sqlalchemy.orm.query import Query
 
 from dictalchemy import constants
 from dictalchemy import errors
 
 
-def get_relation_keys(model):
-    """Get relation keys for a model
+def arg_to_dict(arg):
+    """Convert an argument that can be None, list/tuple or dict to dict
 
-    :returns: List of RelationProperties
+    Example::
+
+        >>> arg_to_dict(None)
+        []
+        >>> arg_to_dict(['a', 'b'])
+        {'a':{},'b':{}}
+        >>> arg_to_dict({'a':{'only': 'id'}, 'b':{'only': 'id'}})
+        {'a':{'only':'id'},'b':{'only':'id'}}
+
+    :return: dict with keys and dict arguments as value
     """
-    return [k.key for k in model.__mapper__.iterate_properties if
-            isinstance(k, RelationshipProperty)]
+    if arg is None:
+        arg = []
+    try:
+        arg = dict(arg)
+    except ValueError:
+        arg = dict.fromkeys(list(arg), {})
 
-
-def get_column_keys(model):
-    """Get column keys for a model
-
-    :returns: List of column keys
-    """
-    return [k.key for k in model.__mapper__.iterate_properties if
-            isinstance(k, ColumnProperty)]
-
-
-def get_synonym_keys(model):
-    """Get synonym keys for a model
-
-    :returns: List of keys for synonyms
-    """
-    return [k.key for k in model.__mapper__.iterate_properties if
-            isinstance(k, SynonymProperty)]
-
-
-def get_primary_key_properties(model):
-    """Get the column properties that affects a primary key
-
-    :returns: Set of column keys
-    """
-    # Find primary keys
-    primary_keys = set()
-    for k in model.__mapper__.iterate_properties:
-        if hasattr(k, 'columns'):
-            for c in k.columns:
-                if c.primary_key:
-                    primary_keys.add(k.key)
-    return primary_keys
+    return arg
 
 
 def asdict(model, exclude=None, exclude_underscore=None, exclude_pk=None,
-           follow=None, include=None, only=None):
+           follow=None, include=None, only=None, method='asdict', **kwargs):
     """Get a dict from a model
 
-    Simple example::
+    Using the `method` parameter makes it possible to have multiple methods
+    that formats the result.
 
-        session.query(User).asdict()
-        {'id': 1, 'username': 'Gerald'}
+    Additional keyword arguments will be passed to all relationships that are
+    followed. This can be used to pass on things like request or context.
 
-    Using exclude_pk::
-
-        session.query(User).asdict(exclude_pk=True)
-        {'username': 'Gerald'}
-
-    Using exclude::
-
-        session.query(User).asdict(exclude=['id'])
-        {'username': 'Gerald'}
-
-    Using follow without arguments::
-
-        session.query(User).asdict(follow={'groups':{}})
-        {'username': 'Gerald', groups=[{'id': 1, 'name': 'User'}]}
-
-    Using follow with arguments::
-
-        session.query(User).asdict(follow={'groups':{'exclude': ['id']})
-        {'username': 'Gerald', groups=[{'name': 'User'}]}
-
-    Using include(for example for including synonyms/properties)::
-
-        session.query(User).asdict(include=['displayname']
-        {'id': 1, 'username': 'Gerald', 'displayname': 'Gerald'}
-
-    :param follow: List or dict of relationships that should be followed. \
+    :param follow: List or dict of relationships that should be followed.
             If the parameter is a dict the value should be a dict of \
-            keyword arguments. Currently it follows InstrumentedList,\
-            MappedCollection and regular 1:1, 1:m, m:m relationships.
+            keyword arguments. Currently it follows InstrumentedList, \
+            MappedCollection and regular 1:1, 1:m, m:m relationships. Follow \
+            takes an extra argument, 'method', which is the method that \
+            should be used on the relation. It also takes the extra argument \
+            'parent' which determines where the relationships data should be \
+            added in the response dict. If 'parent' is set the relationship \
+            will be added with it's own key as a child to `parent`.
     :param exclude: List of properties that should be excluded, will be \
-            merged with `model.classes.DictableModel.dictalchemy_exclude`
+            merged with `model.dictalchemy_exclude`
     :param exclude_pk: If True any column that refers to the primary key will \
             be excluded.
     :param exclude_underscore: Overides `model.dictalchemy_exclude_underscore`\
@@ -106,6 +72,9 @@ def asdict(model, exclude=None, exclude_underscore=None, exclude_pk=None,
             `model.dictalchemy_include`.
     :param only: List of properties that should be included. This will \
             override everything else except `follow`.
+    :param method: Name of the method that is currently called. This will be \
+            the default method used in 'follow' unless another method is\
+            set.
 
     :raises: :class:`dictalchemy.errors.MissingRelationError` \
             if `follow` contains a non-existent relationship.
@@ -116,16 +85,12 @@ def asdict(model, exclude=None, exclude_underscore=None, exclude_pk=None,
 
     """
 
-    if follow is None:
-        follow = []
-    try:
-        follow = dict(follow)
-    except ValueError:
-        follow = dict.fromkeys(list(follow), {})
+    follow = arg_to_dict(follow)
 
-    columns = get_column_keys(model)
-    synonyms = get_synonym_keys(model)
-    relations = get_relation_keys(model)
+    info = inspect(model)
+
+    columns = [c.key for c in info.mapper.column_attrs]
+    synonyms = [c.key for c in info.mapper.synonyms]
 
     if only:
         attrs = only
@@ -139,10 +104,9 @@ def asdict(model, exclude=None, exclude_underscore=None, exclude_pk=None,
                                          constants.default_exclude_underscore)
         if exclude_underscore:
             # Exclude all properties starting with underscore
-            exclude += [k.key for k in model.__mapper__.iterate_properties
-                        if k.key[0] == '_']
+            exclude += [k.key for k in info.mapper.attrs if k.key[0] == '_']
         if exclude_pk is True:
-            exclude += get_primary_key_properties(model)
+            exclude += [c.key for c in info.mapper.primary_key]
 
         include = (include or []) + (getattr(model,
                                              'dictalchemy_asdict_include',
@@ -153,33 +117,68 @@ def asdict(model, exclude=None, exclude_underscore=None, exclude_pk=None,
 
     data = dict([(k, getattr(model, k)) for k in attrs])
 
-    for (k, args) in follow.items():
-        if k not in relations:
-            raise errors.MissingRelationError(k)
-        rel = getattr(model, k)
-        if hasattr(rel, 'asdict'):
-            data.update({k: rel.asdict(rel, **args)})
-        elif isinstance(rel, InstrumentedList):
-            children = []
+    for (rel_key, orig_args) in follow.iteritems():
+
+        try:
+            rel = getattr(model, rel_key)
+        except AttributeError:
+            raise errors.MissingRelationError(rel_key)
+
+        args = copy.deepcopy(orig_args)
+        method = args.pop('method', method)
+        args['method'] = method
+        args.update(copy.copy(kwargs))
+
+        if hasattr(rel, method):
+            rel_data = getattr(rel, method)(**args)
+        elif isinstance(rel, (list, _AssociationList)):
+            rel_data = []
+
             for child in rel:
-                if hasattr(child, 'asdict'):
-                    children.append(child.asdict(**args))
+                if hasattr(child, method):
+                    rel_data.append(getattr(child, method)(**args))
                 else:
-                    children.append(dict(child))
-            data.update({k: children})
-        elif isinstance(rel, MappedCollection):
-            children = {}
+                    try:
+                        rel_data.append(dict(child))
+                        # TypeError is for non-dictable children
+                    except TypeError:
+                        rel_data.append(copy.copy(child))
+
+        elif isinstance(rel, dict):
+            rel_data = {}
+
             for (child_key, child) in rel.iteritems():
-                if hasattr(child, 'asdict'):
-                    children[child_key] = child.asdict(**args)
+                if hasattr(child, method):
+                    rel_data[child_key] = getattr(child, method)(**args)
                 else:
-                    children[child_key] = child.dict(child)
-            data.update({k: children})
+                    try:
+                        rel_data[child_key] = dict(child)
+                    except ValueError:
+                        rel_data[child_key] = copy.copy(child)
+
+        elif isinstance(rel, (AppenderMixin, Query)):
+            rel_data = []
+
+            for child in rel.all():
+                if hasattr(child, method):
+                    rel_data.append(getattr(child, method)(**args))
+                else:
+                    rel_data.append(dict(child))
+
+        elif rel is None:
+            rel_data = None
         else:
-            make_class_dictable(rel)
-            data.update({k: rel.asdict(rel)})
-        #else:
-        #    raise errors.UnsupportedRelationError(k)
+            raise errors.UnsupportedRelationError(rel_key)
+
+        ins_key = args.pop('parent', None)
+
+        if ins_key is None:
+            data[rel_key] = rel_data
+        else:
+            if ins_key not in data:
+                data[ins_key] = {}
+
+            data[ins_key][rel_key] = rel_data
 
     return data
 
@@ -211,30 +210,30 @@ def fromdict(model, data, exclude=None, exclude_underscore=None,
     :param include: List of properties that should be included. This list \
             will override anything in the exclude list. It will not override \
             allow_pk.
-    :param only: List of the only properties that should be returned. This \
+    :param only: List of the only properties that should be set. This \
             will not override `allow_pk` or `follow`.
 
-    :raises: :class:`dictalchemy.DictalchemyError` If a primary key is \
+    :raises: :class:`dictalchemy.errors.DictalchemyError` If a primary key is \
             in data and allow_pk is False
 
     :returns: The model
 
     """
 
-    if follow is None:
-        follow = []
-    try:
-        follow = dict(follow)
-    except ValueError:
-        follow = dict.fromkeys(list(follow), {})
+    follow = arg_to_dict(follow)
 
-    columns = get_column_keys(model)
-    synonyms = get_synonym_keys(model)
-    relations = get_relation_keys(model)
-    primary_keys = get_primary_key_properties(model)
+    info = inspect(model)
+    columns = [c.key for c in info.mapper.column_attrs]
+    synonyms = [c.key for c in info.mapper.synonyms]
+    relations = [c.key for c in info.mapper.relationships]
+    primary_keys = [c.key for c in info.mapper.primary_key]
+
+    if allow_pk is None:
+        allow_pk = getattr(model, 'dictalchemy_fromdict_allow_pk',
+                           constants.default_fromdict_allow_pk)
 
     if only:
-        attrs = only
+        valid_keys = only
     else:
         exclude = exclude or []
         exclude += getattr(model, 'dictalchemy_exclude',
@@ -246,29 +245,30 @@ def fromdict(model, data, exclude=None, exclude_underscore=None,
 
         if exclude_underscore:
             # Exclude all properties starting with underscore
-            exclude += [k.key for k in model.__mapper__.iterate_properties
-                        if k.key[0] == '_']
-
-        if allow_pk is None:
-            allow_pk = getattr(model, 'dictalchemy_fromdict_allow_pk',
-                               constants.default_fromdict_allow_pk)
+            exclude += [k.key for k in info.mapper.attrs if k.key[0] == '_']
 
         include = (include or []) + (getattr(model,
                                              'dictalchemy_fromdict_include',
                                              getattr(model,
                                                      'dictalchemy_include',
                                                      None)) or [])
-        attrs = [k for k in columns + synonyms if k not in exclude] + include
+        valid_keys = [k for k in columns + synonyms
+                      if k not in exclude] + include
 
-    # Update simple data
-    for k, v in data.iteritems():
-        if not allow_pk and k in primary_keys:
-            msg = "Primary key(%r) cannot be updated by fromdict."
-            "Set 'dictalchemy_fromdict_allow_pk' to True in your Model"
-            " or pass 'allow_pk=True'." % k
-            raise errors.DictalchemyError(msg)
-        if k in attrs:
-            setattr(model, k, v)
+    # Keys that will be updated
+    update_keys = set(valid_keys) & set(data.keys())
+
+    # Check for primary keys
+    data_primary_key= update_keys & set(primary_keys)
+    if len(data_primary_key) and not allow_pk:
+        msg = ("Primary keys({0}) cannot be updated by fromdict."
+               "Set 'dictalchemy_fromdict_allow_pk' to True in your Model"
+               " or pass 'allow_pk=True'.").format(','.join(data_primary_key))
+        raise errors.DictalchemyError(msg)
+
+    # Update columns and synonyms
+    for k in update_keys:
+        setattr(model, k, data[k])
 
     # Update simple relations
     for (k, args) in follow.iteritems():
@@ -277,16 +277,18 @@ def fromdict(model, data, exclude=None, exclude_underscore=None,
         if k not in relations:
             raise errors.MissingRelationError(k)
         rel = getattr(model, k)
-        # TODO: Check for fromdict, not asdict
-        if hasattr(rel, 'asdict'):
+        if hasattr(rel, 'fromdict'):
             rel.fromdict(data[k], **args)
 
     return model
 
 
 def iter(model):
-    """iter method for models"""
-    for i in model.asdict().items():
+    """iter method for models
+
+    Yields everything returned by `asdict`.
+    """
+    for i in model.asdict().iteritems():
         yield i
 
 

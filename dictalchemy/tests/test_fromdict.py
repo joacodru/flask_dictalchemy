@@ -1,8 +1,10 @@
 # vim: set fileencoding=utf-8 :
 from __future__ import absolute_import, division
 
-# vim: set fileencoding=utf-8 :
-from __future__ import absolute_import, division
+from dictalchemy import (
+    DictalchemyError,
+)
+
 from dictalchemy.tests import (
     TestCase,
     Named,
@@ -10,7 +12,7 @@ from dictalchemy.tests import (
     OneToManyChild,
     OneToManyParent,
     WithHybrid,
-    WithDefaultInclude
+    WithDefaultInclude,
 )
 
 
@@ -84,26 +86,36 @@ class TestFromdict(TestCase):
 
     def test_include(self):
         h = WithHybrid(1)
-        h.fromdict({'id': 17}, include=['id'])
-        assert h.id == 17
+        h.fromdict({'value': 17}, include=['value'])
+        assert h.value == 17
+
+    def test_dictalchemy_include_doesnt_override_pk(self):
+        h = Named('a name')
+        try:
+            h.fromdict({'id': 1}, include=['id'])
+            assert False
+        except DictalchemyError:
+            assert True
+
+
 
     def test_dictalchemy_include(self):
         m = WithHybrid(2)
-        m.fromdict({'id': 7})
-        assert m.id == 2
-        setattr(m, 'dictalchemy_include', ['id'])
-        m.fromdict({'id': 7})
-        assert m.id == 7
+        m.fromdict({'value': 7})
+        assert m.value == 2
+        setattr(m, 'dictalchemy_include', ['value'])
+        m.fromdict({'value': 7})
+        assert m.value == 7
 
     def test_dictalchemy_asdict_include_overrides(self):
         m = WithHybrid(2)
-        m.fromdict({'id': 7})
-        assert m.id == 2
-        setattr(m, 'dictalchemy_include', ['id'])
-        m.fromdict({'id': 7})
+        m.fromdict({'value': 7})
+        assert m.value == 2
+        setattr(m, 'dictalchemy_include', ['value'])
+        m.fromdict({'value': 7})
         setattr(m, 'dictalchemy_fromdict_include', [])
-        m.fromdict({'id': 2})
-        assert m.id == 7
+        m.fromdict({'value': 2})
+        assert m.value == 7
 
     def test_default_include(self):
         h = WithDefaultInclude(1)
@@ -126,3 +138,20 @@ class TestFromdict(TestCase):
         named = Named('a name')
         named.fromdict({'name': 'other name'}, exclude='name', only=['name'])
         assert named.name == 'other name'
+
+    def test_exluded_pk_will_not_raise_exception(self):
+        named = Named('a name')
+        self.session.add(named)
+        self.session.commit()
+        original_id = named.id
+
+        named.fromdict({'id': original_id + 1}, exclude=['id'])
+        assert named.id == original_id
+
+    def test_excluded_pk_with_allow_pk_will_not_be_changed(self):
+        named = Named('a name')
+        self.session.add(named)
+        self.session.commit()
+        original_id = named.id
+        named.fromdict({'id': original_id + 1}, allow_pk=True, exclude=['id'])
+        assert named.id == original_id

@@ -2,6 +2,7 @@
 from __future__ import absolute_import, division
 
 from dictalchemy import DictableModel
+from dictalchemy.utils import arg_to_dict
 import unittest
 
 from sqlalchemy import create_engine
@@ -10,6 +11,8 @@ from sqlalchemy import Table, Column, String, Integer, ForeignKey
 from sqlalchemy.orm import relationship, backref, synonym
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm.collections import attribute_mapped_collection
+from sqlalchemy.ext.orderinglist import ordering_list
+from sqlalchemy.ext.associationproxy import association_proxy
 
 
 # Setup sqlalchemy
@@ -213,18 +216,20 @@ class WithHybrid(Base):
 
     __tablename__ = 'withhybrid'
 
-    _id = Column('id', Integer, primary_key=True)
+    id = Column('id', Integer, primary_key=True)
+
+    _value = Column('value', Integer)
 
     @hybrid_property
-    def id(self):
-        return self._id
+    def value(self):
+        return self._value
 
-    @id.setter
-    def set_id(self, value):
-        self._id = value
+    @value.setter
+    def set_value(self, value):
+        self._value = value
 
-    def __init__(self, id):
-        self.id = id
+    def __init__(self, value):
+        self.value = value
 
 
 class WithDefaultInclude(Base):
@@ -271,3 +276,202 @@ class WithAttributeMappedCollection(Base):
                           collection_class=attribute_mapped_collection('name'),
                           cascade="all, delete-orphan",
                           backref=backref('parents'))
+
+
+class DynamicRelationChild(Base):
+
+    __tablename__ = 'dynamicrelationchild'
+
+    id = Column(Integer, primary_key=True)
+
+    parent_id = Column(Integer, ForeignKey('dynamicrelationparent.id'),
+                       nullable=False)
+
+
+class DynamicRelationParent(Base):
+
+    __tablename__ = 'dynamicrelationparent'
+
+    id = Column(Integer, primary_key=True)
+
+    childs = relationship(
+        DynamicRelationChild,
+        primaryjoin="DynamicRelationChild.parent_id==DynamicRelationParent.id",
+        backref=backref('parent'),
+        lazy='dynamic')
+
+
+class OptionalChild(Base):
+    __tablename__ = 'optionalchild'
+    id = Column(Integer, primary_key=True)
+
+
+class ParentWithOptionalChild(Base):
+    __tablename__ = 'parentwithoptionalchild'
+    id = Column(Integer, primary_key=True)
+    child_id = Column(Integer, ForeignKey('optionalchild.id'), nullable=True)
+    child = relationship(OptionalChild, uselist=False)
+
+
+class AsHalMixin(object):
+
+    base_url = None
+
+    def get_hal_links(self):
+        if self.base_url:
+            return {'self': '{0}/{1}'.format(self.base_url, self.id)}
+        else:
+            return {}
+
+    def ashal(self, **kwargs):
+        kwargs['method'] = 'ashal'
+        result = self.asdict(**kwargs)
+
+        follow = arg_to_dict(kwargs.get('follow', None))
+        _embedded = {}
+        for (k, args) in follow.iteritems():
+            if args.get('_embedded', None) and k in result:
+                _embedded[k] = result.pop(k)
+
+        result['_embedded'] = _embedded
+        result['_links'] = self.get_hal_links()
+
+        return result
+
+
+class WithHalChild(Base, AsHalMixin):
+
+    __tablename__ = 'withhalchild'
+
+    base_url = '/with_hal_child'
+
+    id = Column(Integer, primary_key=True)
+
+
+class WithHalParent(Base, AsHalMixin):
+
+    __tablename__ = 'withhalparent'
+
+    base_url = '/with_hal_parent'
+
+    id = Column(Integer, primary_key=True)
+    child_id = Column(Integer, ForeignKey('withhalchild.id'), nullable=True)
+    child = relationship(WithHalChild)
+
+
+class WithMethodWithExtraArgumentChild(Base):
+
+    __tablename__ = 'withmethodwithextraargumentchild'
+
+    id = Column(Integer, primary_key=True)
+
+    def extra_method(self, number, **kwargs):
+        return {'number': number}
+
+
+class WithMethodWithExtraArgumentParent(Base):
+
+    __tablename__ = 'withmethodwithextraargumentparent'
+
+    id = Column(Integer, primary_key=True)
+
+    child_id = Column(Integer,
+                      ForeignKey('withmethodwithextraargumentchild.id'),
+                      nullable=True)
+
+    child = relationship(WithMethodWithExtraArgumentChild)
+
+
+class OrderingChild(Base):
+
+    __tablename__ = 'orderingchild'
+
+    id = Column(Integer, primary_key=True)
+
+    position = Column(Integer)
+
+    parent_id = Column(Integer, ForeignKey('orderingparent.id'))
+
+
+class OrderingParent(Base):
+    __tablename__ = 'orderingparent'
+
+    id = Column(Integer, primary_key=True)
+
+    children = relationship(OrderingChild,
+                            order_by=OrderingChild.position,
+                            collection_class=ordering_list('position'))
+
+
+m2m_associationproxy_table = Table(
+    'm2maassociationlisttable',
+    Base.metadata,
+    Column('parent_id', Integer, ForeignKey("m2massociationlistparent.id"),
+           primary_key=True),
+    Column('child_id', Integer, ForeignKey("m2massociationlistchild.id"),
+           primary_key=True))
+
+
+class M2MAssociationListParent(Base):
+
+    __tablename__ = 'm2massociationlistparent'
+
+    id = Column(Integer, primary_key=True)
+
+    children = relationship('M2MAssociationListChild',
+                            secondary=lambda: m2m_associationproxy_table)
+
+    child_list = association_proxy('children', 'id')
+
+
+class M2MAssociationListChild(Base):
+
+    __tablename__ = 'm2massociationlistchild'
+
+    id = Column(Integer, primary_key=True)
+
+
+class M2MAssociationDictParent(Base):
+
+    __tablename__ = 'm2massociationdictparent'
+
+    id = Column(Integer, primary_key=True)
+
+    children = association_proxy(
+                'child_ids',
+                'id',
+                creator=lambda k, v: M2MAssociationDictKey(the_child_key=k,
+                                                           the_child_value=v))
+
+
+class M2MAssociationDictKey(Base):
+
+    __tablename__ = 'm2massociationdictkey'
+
+    parent_id = Column(Integer,
+                       ForeignKey('m2massociationdictparent.id'),
+                       primary_key=True)
+
+    child_id = Column(Integer,
+                      ForeignKey('m2massociationdictchild.id'),
+                      primary_key=True)
+
+    the_child_key = Column(String)
+
+    user = relationship(M2MAssociationDictParent, backref=backref(
+            "children",
+            collection_class=attribute_mapped_collection("the_child_key"),
+            cascade="all, delete-orphan"))
+
+    _child_value = relationship("M2MAssociationDictChild")
+
+    child_value = association_proxy('_child_value', 'the_child_value')
+
+
+class M2MAssociationDictChild(Base):
+
+    __tablename__ = 'm2massociationdictchild'
+
+    id = Column(Integer, primary_key=True)
+
+    the_child_value = Column(String())
