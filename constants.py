@@ -1,10 +1,5 @@
 # vim: set fileencoding=utf-8 :
-"""
-~~~~~~~~~
-Constants
-~~~~~~~~~
-
-"""
+""" Constants """
 from __future__ import absolute_import, division
 
 default_exclude = None

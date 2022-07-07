@@ -16,7 +16,7 @@ class DictalchemyError(Exception):
 class UnsupportedRelationError(DictalchemyError):
     """Raised when a relation is not supported by asdict or fromdict.
 
-    :ivar relation_key: Relation name
+    The name of the relation can be accessed from 'relation_key'
     """
 
     def __init__(self, relation_key):
@@ -29,7 +29,7 @@ class UnsupportedRelationError(DictalchemyError):
 class MissingRelationError(DictalchemyError):
     """Raised when a relationship is missing
 
-    :ivar relation_key: Relation name
+    The name of the relation can be accessed from 'relation_key'
     """
 
     def __init__(self, relation_key):

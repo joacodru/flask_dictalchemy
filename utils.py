@@ -329,4 +329,3 @@ def make_class_dictable(
     setattr(cls, 'dictalchemy_asdict_include', asdict_include)
     setattr(cls, 'dictalchemy_fromdict_include', fromdict_include)
     return cls
-

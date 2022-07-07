@@ -16,20 +16,8 @@ from dictalchemy.tests import (
     WithHybrid,
     WithDefaultInclude,
     WithAttributeMappedCollection,
-    WithAttributeMappedCollectionChild,
-    DynamicRelationChild,
-    DynamicRelationParent,
-    ParentWithOptionalChild,
-    OptionalChild,
-    WithHalChild,
-    WithHalParent,
-    WithMethodWithExtraArgumentParent,
-    WithMethodWithExtraArgumentChild,
-    OrderingParent,
-    OrderingChild,
-    M2MAssociationListParent,
-    M2MAssociationListChild,
-    M2MAssociationDictParent)
+    WithAttributeMappedCollectionChild
+)
 
 
 class TestAsdict(TestCase):
@@ -103,24 +91,6 @@ class TestAsdict(TestCase):
         assert parent.asdict(follow=['child']) == {'id': parent.id,
                                                    'name': parent.name,
                                                    'child': child.asdict()}
-
-    def test_one_to_many_follow_with_parent(self):
-        child = OneToManyChild('child')
-        parent = OneToManyParent('parent')
-        parent.child = child
-        self.session.add(parent)
-        self.session.commit()
-        assert parent.asdict(follow={
-            'child': {
-                'parent': 'relationships',
-            },
-        }) == {
-            'id': parent.id,
-            'name': parent.name,
-            'relationships': {
-                'child': child.asdict(),
-            },
-        }
 
     def test_many_to_many_follow(self):
         s = self.session
@@ -196,24 +166,24 @@ class TestAsdict(TestCase):
                                          'child': {'name': c1c.name}}}
 
     def test_hybrid_property(self):
-        assert WithHybrid(2).asdict(include=['value'])['value'] == 2
+        assert WithHybrid(2).asdict(include=['id']) == {'id': 2}
 
     def test_default_include(self):
         assert WithDefaultInclude(2).asdict() == {'id': 2, 'id_alias': 2}
 
     def test_dictalchemy_include(self):
         m = WithHybrid(2)
-        assert 'value' not in dict(m)
-        setattr(m, 'dictalchemy_include', ['value'])
-        assert 'value' in dict(m)
+        assert 'id' not in dict(m)
+        setattr(m, 'dictalchemy_include', ['id'])
+        assert 'id' in dict(m)
 
     def test_dictalchemy_asdict_include_overrides(self):
         m = WithHybrid(2)
-        assert 'value' not in dict(m)
-        setattr(m, 'dictalchemy_include', ['value'])
-        assert 'value' in dict(m)
+        assert 'id' not in dict(m)
+        setattr(m, 'dictalchemy_include', ['id'])
+        assert 'id' in dict(m)
         setattr(m, 'dictalchemy_asdict_include', [])
-        assert 'value' not in dict(m)
+        assert 'id' not in dict(m)
 
     def test_attribute_mapped_collection(self):
         p = WithAttributeMappedCollection()
@@ -245,197 +215,3 @@ class TestAsdict(TestCase):
         assert 'id' in dict(named)
         assert 'name' not in named.asdict(only=['id'], exclude=['id'])
         assert 'id' not in named.asdict(only=['name'], exclude=['name'])
-
-    def test_dynamic_relation(self):
-
-        child = DynamicRelationChild()
-        parent = DynamicRelationParent()
-        parent.childs.append(child)
-        self.session.add(parent)
-        self.session.add(child)
-        self.session.commit()
-        child_id = child.id
-        parent_id = parent.id
-        self.session.expire_all()
-        parent = self.session.query(DynamicRelationParent
-                                    ).filter_by(id=parent_id).first()
-        assert parent.asdict(follow={'childs':{}}
-                             )['childs'][0]['id'] == child_id
-
-    def test_nullable_fk_returns_none_relation(self):
-        parent = ParentWithOptionalChild()
-        self.session.add(parent)
-        self.session.commit()
-        assert parent.asdict(follow={'child':{}})['child'] == None
-        child = OptionalChild()
-        parent.child = child
-        self.session.add(child)
-        self.session.commit()
-        assert parent.asdict(follow={'child':{}})['child']['id'] == child.id
-
-    def test_method_argument(self):
-
-        parent = WithHalParent()
-        self.session.add(parent)
-        self.session.commit()
-
-        assert parent.ashal() == {
-            'id': parent.id,
-            'child_id': None,
-            '_embedded': {},
-            '_links': {
-                'self': '/with_hal_parent/{0}'.format(parent.id),
-            },
-        }
-
-        child = WithHalChild()
-        parent.child = child
-        self.session.add(child)
-        self.session.commit()
-
-        result = parent.ashal(follow={'child': {'_embedded': True}})
-        expected = {
-            'id': parent.id,
-            'child_id': child.id,
-            '_embedded': {
-                'child': {
-                    'id': child.id,
-                    '_embedded': {},
-                    '_links': {
-                        'self': '/with_hal_child/{0}'.format(child.id),
-                    },
-                }
-            },
-            '_links': {
-                'self': '/with_hal_parent/{0}'.format(parent.id),
-            },
-        }
-
-        assert result == expected
-
-        # Using `method` argument when following child
-        result = parent.ashal(follow={'child': {'_embedded': True,
-                                                'method': 'asdict'}})
-        expected = {
-            'id': parent.id,
-            'child_id': child.id,
-            '_embedded': {
-                'child': {
-                    'id': child.id,
-                }
-            },
-            '_links': {
-                'self': '/with_hal_parent/{0}'.format(parent.id),
-            },
-        }
-
-    def test_extra_kwargs(self):
-
-        parent = WithMethodWithExtraArgumentParent()
-        child = WithMethodWithExtraArgumentChild()
-        parent.child = child
-
-        self.session.add(parent)
-        self.session.add(child)
-        self.session.commit()
-
-        assert parent.asdict(follow=['child'],
-                            method='extra_method',
-                            number=123) == {
-                                'id': parent.id,
-                                'child_id': child.id,
-                                'child': {
-                                    'number': 123,
-                                },
-                            }
-
-    def test_follow_args_are_not_modified(self):
-
-        parent = WithMethodWithExtraArgumentParent()
-        child = WithMethodWithExtraArgumentChild()
-        parent.child = child
-
-        self.session.add(parent)
-        self.session.add(child)
-        self.session.commit()
-
-        args = {
-            'follow': {
-                'child': {
-                    'parent': 'some_parent',
-                },
-            },
-        }
-
-        orig_args = {
-            'follow': {
-                'child': {
-                    'parent': 'some_parent',
-                },
-            },
-        }
-
-        parent.asdict(**args)
-
-        assert args == orig_args
-
-    def test_orderinglist(self):
-
-        parent = OrderingParent()
-        parent.children.append(OrderingChild())
-        parent.children.append(OrderingChild())
-
-        assert parent.asdict(only=['children'],
-                             follow={'children': {'only': ['position']}}) == {
-            'children': [{'position': 0}, {'position': 1}],
-            }
-
-    def test_follow_m2m_association_list(self):
-
-        parent = M2MAssociationListParent()
-        child1 = M2MAssociationListChild(id=2)
-        child2 = M2MAssociationListChild(id=7)
-
-        parent.children.append(child1)
-        parent.children.append(child2)
-
-        assert parent.asdict(
-            only=['child_list'],
-            follow={'child_list': {}}) == {'child_list': [2, 7]}
-
-        self.session.add(parent)
-        self.session.add(child1)
-        self.session.add(child2)
-
-        self.session.commit()
-
-        assert parent.asdict(
-            only=['child_list'],
-            follow={'child_list': {}}) == {'child_list': [2, 7]}
-
-    def test_follow_m2m_association_dict(self):
-
-        parent = M2MAssociationDictParent()
-
-        parent.child_dict = {'key a': 'value a', 'key b': 'value b'}
-
-        assert parent.asdict(
-            only=['child_dict'],
-            follow={'child_dict': {}}) == {
-                'child_dict': {
-                    'key a': 'value a',
-                    'key b': 'value b',
-                },
-            }
-
-        self.session.add(parent)
-        self.session.commit()
-
-        assert parent.asdict(
-            only=['child_dict'],
-            follow={'child_dict': {}}) == {
-                'child_dict': {
-                    'key a': 'value a',
-                    'key b': 'value b',
-                },
-            }
