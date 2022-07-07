@@ -25,16 +25,12 @@ install_requires = [
 # Requirement for running tests
 test_requires = install_requires
 
-extra = {}
-if sys.version_info >= (3,):
-    extra['use_2to3'] = True
-
 setup(name='dictalchemy',
       version='0.1.2.7',
       description="Contains asdict and fromdict methods for SQL-Alchemy "
       "declarative models",
       long_description=README,
-      url='http://github.com/danielholmstrom/dictalchemy/',
+      url='https://github.com/joacodru/flask_dictalchemy/',
       license='MIT',
       author='Daniel Holmstrom',
       author_email='holmstrom.daniel@gmail.com',
