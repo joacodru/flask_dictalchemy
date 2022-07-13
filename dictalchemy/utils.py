@@ -176,10 +176,7 @@ def asdict(model, exclude=None, exclude_underscore=None, exclude_pk=None,
                     children[child_key] = child.dict(child)
             data.update({k: children})
         else:
-            make_class_dictable(rel)
-            data.update({k: rel.asdict(rel)})
-        #else:
-        #    raise errors.UnsupportedRelationError(k)
+        	raise errors.UnsupportedRelationError(k)
 
     return data
 
